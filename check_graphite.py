@@ -24,7 +24,7 @@ NAGIOS_STATUSES = {
 
 class Graphite(object):
 
-    def __init__(self, url, targets, _from, _until):
+    def __init__(self, url, targets, _from, _until, url_opener):
         self.url = url.rstrip('/')
         self.targets = targets
         self._from = _from
@@ -35,6 +35,7 @@ class Graphite(object):
             [('format', 'json')]
         self.full_url = self.url + '/render?' +\
             urllib.urlencode(params)
+        self.url_opener = url_opener
 
     def check_datapoints(self, datapoints, check_func, **kwargs):
         """Find alerting datapoints
@@ -62,7 +63,7 @@ class Graphite(object):
 
     def fetch_metrics(self):
         try:
-            response = urllib2.urlopen(self.full_url)
+            response = self.url_opener.open(self.full_url)
 
             if response.code != 200:
                 return None
@@ -173,6 +174,12 @@ if __name__ == '__main__':
                       type='float',
                       metavar='VALUE',
                       help='Critical if datapoints beyond VALUE')
+    parser.add_option('--username', dest='username',
+                      metavar='USERNAME',
+                      help='username for HTTP basic authentication')
+    parser.add_option('--password', dest='password',
+                      metavar='PASSWORD',
+                      help='password for HTTP basic authentication')
 
     (options, args) = parser.parse_args()
 
@@ -214,8 +221,24 @@ if __name__ == '__main__':
             parser.print_help()
             sys.exit(NAGIOS_STATUSES['UNKNOWN'])
 
+    if (options.username is None) ^ (options.password is None):
+        print 'ERROR: username must be set if and only if password is set\n'
+        parser.print_help()
+        sys.exit(NAGIOS_STATUSES['UNKNOWN'])
+
+    if options.username is not None and options.password is not None:
+        # per http://www.voidspace.org.uk/python/articles/authentication.shtml
+        password_manager = urllib2.HTTPPasswordMgrWithDefaultRealm()
+        password_manager.add_password(None, options.graphite_url, options.username, options.password)
+        auth_handler = urllib2.HTTPBasicAuthHandler(password_manager)
+        url_handlers = [auth_handler]
+    else:
+        url_handlers = []
+
+    url_opener = urllib2.build_opener(*url_handlers)
+
     check_output = {}
-    graphite = Graphite(options.graphite_url, targets, real_from, options._until)
+    graphite = Graphite(options.graphite_url, targets, real_from, options._until, url_opener)
     metric_data = graphite.fetch_metrics()
 
     if metric_data:
